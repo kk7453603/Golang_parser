@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gocolly/colly/v2"
@@ -42,7 +43,8 @@ func LoadFile() ([]string, []string, error) {
 
 func main() {
 	var full_categories []string = make([]string, 0, 100000)
-
+	var full_info []string = make([]string, 0, 100000)
+	var full_names []string = make([]string, 0, 100000)
 	data, codes, err := LoadFile()
 	if err != nil {
 		log.Fatalln(err)
@@ -66,6 +68,7 @@ func main() {
 		colly.CacheDir("cache"),
 		colly.MaxDepth(2),
 		colly.AllowURLRevisit(),
+		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"),
 		colly.Debugger(&debug.LogDebugger{}),
 	)
 
@@ -73,16 +76,13 @@ func main() {
 		DomainGlob:  "*ozon.*",
 		Parallelism: 100000,
 		RandomDelay: 1 * time.Second,
+		Delay:       2 * time.Second,
 	})
 
 	q, _ := queue.New(
 		2,
 		&queue.InMemoryQueueStorage{MaxSize: 100000},
 	)
-
-	c.OnRequest(func(r *colly.Request) {
-		r.Ctx.Put("code", r.URL.Query().Get("text"))
-	})
 
 	c.OnError(func(r *colly.Response, err error) {
 		log.Println("Request URL:", r.Request.URL, "failed with response:", r, "\nError:", err)
@@ -94,6 +94,12 @@ func main() {
 		c.Visit(h.Request.AbsoluteURL(link))
 	})
 
+	c.OnHTML("h1.nm3_27", func(h *colly.HTMLElement) {
+		name := strings.TrimSpace(h.Text)
+		log.Println("Название: " + name)
+		full_names = append(full_names, name)
+	})
+
 	c.OnHTML("ol.eg1_10", func(h *colly.HTMLElement) {
 		categories := ""
 		h.ForEach("li.e1g_10 > span.h5a.eg2_10", func(i int, h *colly.HTMLElement) {
@@ -102,6 +108,7 @@ func main() {
 		h.ForEach("li.e1g_10 > a", func(i int, h *colly.HTMLElement) {
 			categories += h.Text + ";"
 		})
+		categories = strings.Trim(categories, ";")
 		log.Println("Найденная категория:", categories)
 		full_categories = append(full_categories, categories)
 	})
@@ -112,7 +119,6 @@ func main() {
 			key := el.ChildText("dt.k7p_27 span.p7k_27")
 			value := el.ChildText("dd.pk7_27")
 
-			// Если значение содержит ссылку, то берём текст ссылки
 			if value == "" {
 				value = el.ChildText("dd.pk7_27 a")
 			}
@@ -128,21 +134,24 @@ func main() {
 				log.Println("Ошибка сериализации в JSON:", err)
 				return
 			}
-			writer.Write([]string{e.Request.URL.String(), "", "", string(jsonData)})
+			full_info = append(full_info, string(jsonData))
+		} else {
+			full_info = append(full_info, "-")
 		}
 	})
 
-	for i := 0; i < 20; i++ { //поменять на len(data)
+	for i := 0; i < len(data); i++ {
 		q.AddURL(data[i])
-		//fmt.Println("Загруженный URL:", data[i])
+
 	}
 
 	if err = q.Run(c); err != nil {
 		log.Panicln(err)
 	}
+
 	c.Wait()
 
-	for i := 0; i < 20; i++ {
-		writer.Write([]string{codes[i], full_categories[i]})
+	for j := 0; j < max(len(codes), len(full_categories), len(full_names)); j++ {
+		writer.Write([]string{codes[j], full_categories[j], full_names[j]})
 	}
 }
