@@ -6,18 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/gocolly/colly/v2"
-	"github.com/gocolly/colly/v2/debug"
 	"github.com/gocolly/colly/v2/queue"
 )
 
 func LoadFile() ([]string, []string, error) {
-	Load_Codes := make([]string, 0, 100000)
-	Clear_Codes := make([]string, 0, 100000)
+	Load_Codes := make([]string, 0, 1000)
+	Clear_Codes := make([]string, 0, 1000)
 	file, err := os.Open("D:/Go_projects/Golang_parser/cmd/ozon_code.txt")
 	if err != nil {
 		log.Println("Ошибка открытия файла:", err)
@@ -42,9 +42,11 @@ func LoadFile() ([]string, []string, error) {
 }
 
 func main() {
-	var full_categories []string = make([]string, 0, 100000)
-	var full_info []string = make([]string, 0, 100000)
-	var full_names []string = make([]string, 0, 100000)
+	time_start := time.Now()
+
+	var full_categories []string = make([]string, 0, 1000)
+	var full_info []string = make([]string, 0, 1000)
+	var full_names []string = make([]string, 0, 1000)
 	data, codes, err := LoadFile()
 	if err != nil {
 		log.Fatalln(err)
@@ -62,6 +64,17 @@ func main() {
 	defer writer.Flush()
 	writer.Write([]string{"Код", "Категории", "Название", "Характеристики"})
 
+	errorFile, err := os.Create("ozon_fail.csv")
+	if err != nil {
+		log.Fatalln("Ошибка создания файла:", err)
+		return
+	}
+	defer errorFile.Close()
+
+	writer_error := csv.NewWriter(errorFile)
+	defer writer_error.Flush()
+	writer_error.Write([]string{"Коды ошибок"})
+
 	c := colly.NewCollector(
 		colly.AllowedDomains("www.ozon.ru"),
 		colly.Async(true),
@@ -69,34 +82,40 @@ func main() {
 		colly.MaxDepth(2),
 		colly.AllowURLRevisit(),
 		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"),
-		colly.Debugger(&debug.LogDebugger{}),
+		//colly.Debugger(&debug.LogDebugger{}),
 	)
 
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*ozon.*",
-		Parallelism: 100000,
+		Parallelism: 10000,
 		RandomDelay: 1 * time.Second,
-		Delay:       2 * time.Second,
 	})
 
 	q, _ := queue.New(
 		2,
-		&queue.InMemoryQueueStorage{MaxSize: 100000},
+		&queue.InMemoryQueueStorage{MaxSize: 10000},
 	)
 
 	c.OnError(func(r *colly.Response, err error) {
-		log.Println("Request URL:", r.Request.URL, "failed with response:", r, "\nError:", err)
+		parsedURL, parseErr := url.Parse(r.Request.URL.String())
+		if parseErr != nil {
+			//log.Println("Ошибка при парсинге URL:", parseErr)
+			return
+		}
+		params := parsedURL.Query()
+		text := params.Get("text")
+		writer_error.Write([]string{text, err.Error()})
 	})
 
 	c.OnHTML(".tile-hover-target", func(h *colly.HTMLElement) {
 		link := h.Attr("href")
-		log.Println("link: ", h.Request.AbsoluteURL(link))
+		//log.Println("link: ", h.Request.AbsoluteURL(link))
 		c.Visit(h.Request.AbsoluteURL(link))
 	})
 
 	c.OnHTML("h1.nm3_27", func(h *colly.HTMLElement) {
 		name := strings.TrimSpace(h.Text)
-		log.Println("Название: " + name)
+		//log.Println("Название: " + name)
 		full_names = append(full_names, name)
 	})
 
@@ -109,7 +128,7 @@ func main() {
 			categories += h.Text + ";"
 		})
 		categories = strings.Trim(categories, ";")
-		log.Println("Найденная категория:", categories)
+		//log.Println("Найденная категория:", categories)
 		full_categories = append(full_categories, categories)
 	})
 
@@ -140,9 +159,8 @@ func main() {
 		}
 	})
 
-	for i := 0; i < len(data); i++ {
+	for i := 0; i < 1000; i++ {
 		q.AddURL(data[i])
-
 	}
 
 	if err = q.Run(c); err != nil {
@@ -151,7 +169,10 @@ func main() {
 
 	c.Wait()
 
-	for j := 0; j < max(len(codes), len(full_categories), len(full_names)); j++ {
+	time_end := time.Since(time_start)
+	log.Println(time_end.Milliseconds())
+
+	for j := 0; j < min(len(codes), len(full_categories), len(full_names)); j++ {
 		writer.Write([]string{codes[j], full_categories[j], full_names[j]})
 	}
 }
