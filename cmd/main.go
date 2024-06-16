@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -97,14 +96,7 @@ func main() {
 	)
 
 	c.OnError(func(r *colly.Response, err error) {
-		parsedURL, parseErr := url.Parse(r.Request.URL.String())
-		if parseErr != nil {
-			//log.Println("Ошибка при парсинге URL:", parseErr)
-			return
-		}
-		params := parsedURL.Query()
-		text := params.Get("text")
-		writer_error.Write([]string{text, err.Error()})
+		writer_error.Write([]string{r.Request.URL.String(), err.Error()})
 	})
 
 	c.OnHTML(".tile-hover-target", func(h *colly.HTMLElement) {
@@ -170,7 +162,7 @@ func main() {
 	c.Wait()
 
 	time_end := time.Since(time_start)
-	log.Println(time_end.Milliseconds())
+	log.Println(time_end.Milliseconds(), "ms")
 
 	for j := 0; j < min(len(codes), len(full_categories), len(full_names)); j++ {
 		writer.Write([]string{codes[j], full_categories[j], full_names[j]})
